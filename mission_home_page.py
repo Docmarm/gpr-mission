@@ -105,7 +105,7 @@ if 'app_mode' not in st.session_state:
 # En-tête principal
 st.markdown("""
 <div class="main-header">
-    <h1>🚗 Gestion des Missions Sonatel</h1>
+    <h1>🚗 Gestion des Missions</h1>
     <p>Plateforme digitale de gestion des véhicules et missions GPR/EMI</p>
 </div>
 """, unsafe_allow_html=True)
@@ -132,7 +132,6 @@ if st.session_state.app_mode is None:
                 <div class="feature-item">✅ Vérifier les disponibilités</div>
                 <div class="feature-item">✅ Soumettre une demande</div>
                 <div class="feature-item">✅ Suivre votre demande</div>
-                <div class="feature-item">✅ Recevoir des notifications</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -153,7 +152,6 @@ if st.session_state.app_mode is None:
                 <div class="feature-item">✅ Optimisation d'itinéraire</div>
                 <div class="feature-item">✅ Calcul des distances</div>
                 <div class="feature-item">✅ Planning détaillé</div>
-                <div class="feature-item">✅ Carte interactive</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -162,33 +160,7 @@ if st.session_state.app_mode is None:
             st.switch_page("pages/mission.py")
 
     
-    # Section informations
-    st.markdown("---")
-    
-    col_info1, col_info2, col_info3 = st.columns(3)
-    
-    with col_info1:
-        st.markdown("""
-        ### 📊 Statistiques
-        - **50+** missions/mois
-        - **15** véhicules
-        - **20** chauffeurs
-        """)
 
-    with col_info2:
-        st.markdown("""
-        ### ⚡ Rapidité
-        - Réponse en **24h**
-        - Validation instantanée
-        - Suivi en temps réel
-        """)
-    with col_info3:
-        st.markdown("""
-        ### 🔒 Sécurité
-        - Authentification Firebase
-        - Données cryptées
-        - Accès contrôlé
-        """)
 
     # Footer
     st.markdown(
@@ -291,7 +263,7 @@ if st.session_state.app_mode == "demande":
             with col_org1:
                 structure = st.text_input(
                     "Structure/Direction*",
-                    placeholder="Ex: SNT/DAL/E",
+                    placeholder="Ex: DAL/GPR/ESP",
                     help="Saisissez directement votre direction/structure"
                 )
             
