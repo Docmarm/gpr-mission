@@ -1,0 +1,15 @@
+streamlit
+firebase-admin
+pandas
+plotly
+requests
+toml
+geopy
+folium
+streamlit-folium
+openpyxl
+xlrd
+python-docx
+reportlab
+google-cloud-firestore
+google-cloud-storage
