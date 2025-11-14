@@ -781,7 +781,55 @@ if page == "📊 Tableau de bord":
                         
         except Exception as e:
             show_toast(f"Erreur top chauffeurs: {e}", "error")
-
+        
+        st.markdown("<div class='section-header'>💰 Montants par chauffeur (mois)</div>", unsafe_allow_html=True)
+        try:
+            if db is not None:
+                from firebase_config import StatisticsManager
+                stats_mgr = StatisticsManager()
+                now = datetime.now()
+                report = stats_mgr.get_monthly_report(now.year, now.month) or {}
+                dstats = report.get('driver_stats') or {}
+                drivers_map = {d.get('id'): d.get('name') for d in cached_all_drivers()}
+                rows = []
+                for did, s in dstats.items():
+                    rows.append({
+                        'Chauffeur': drivers_map.get(did, did),
+                        'Missions': int(s.get('missions', 0)),
+                        'Jours': int(s.get('days', 0)),
+                        'Per Diem (FCFA)': int(s.get('perdiem_fcfa', 0)),
+                        'Hôtel (FCFA)': int(s.get('hotel_fcfa', 0)),
+                        'Total (FCFA)': int(s.get('total_fcfa', (s.get('perdiem_fcfa', 0) or 0) + (s.get('hotel_fcfa', 0) or 0)))
+                    })
+                df_pay = pd.DataFrame(rows)
+                if not df_pay.empty:
+                    df_pay = df_pay.sort_values('Total (FCFA)', ascending=False)
+                    st.dataframe(df_pay.reset_index(drop=True), use_container_width=True, hide_index=True)
+                    col_p1, col_p2 = st.columns(2)
+                    with col_p1:
+                        csv = df_pay.to_csv(index=False).encode('utf-8')
+                        st.download_button("📥 CSV montants", data=csv, file_name="montants_chauffeurs.csv", mime="text/csv", use_container_width=True)
+                    with col_p2:
+                        try:
+                            xlsx = to_excel_bytes(df_pay, "Montants Chauffeurs")
+                            st.download_button("📥 Excel montants", data=xlsx, file_name="montants_chauffeurs.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                        except:
+                            pass
+                else:
+                    st.info("Aucune mission ce mois")
+            else:
+                df_pay = pd.DataFrame({
+                    'Chauffeur': [f"Chauffeur {i}" for i in range(1, 6)],
+                    'Missions': [5,4,3,2,1],
+                    'Jours': [10,8,6,4,2],
+                    'Per Diem (FCFA)': [80000,64000,48000,32000,16000],
+                    'Hôtel (FCFA)': [300000,240000,180000,120000,60000],
+                    'Total (FCFA)': [380000,304000,228000,152000,76000]
+                })
+                st.dataframe(df_pay, use_container_width=True, hide_index=True)
+        except Exception as e:
+            show_toast(f"Erreur montants: {e}", "error")
+    
     # Tips et aide
     with st.expander("💡 Astuces d'utilisation"):
         st.markdown("""
@@ -2556,9 +2604,7 @@ with st.expander("❓ Aide et documentation"):
     ### 🆘 Support
     
     En cas de problème :
-    1. Vérifiez que Firebase est correctement configuré
-    2. Consultez les messages d'erreur détaillés
-    3. Contactez l'administrateur système si nécessaire
+    1. Contacter Moctar TALL (77 639 96 12)
     """)
 
 # Informations de version et développeur
@@ -2619,7 +2665,7 @@ elif page == "📊 Suivi Style Excel":
         with col_f3:
             structure_filter = st.selectbox(
                 "🏢 Structure",
-                ["Toutes", "SNT/DAL/E", "SNT/DRP/R", "SNT/DTS", "Autre"]
+                ["Toutes", "DAL/GPR/ESP", "DAL/DRP/EMI", "DAL/TCG", "Autre"]
             )
         
         with col_f4:
