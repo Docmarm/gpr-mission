@@ -95,6 +95,8 @@ st.markdown("""
         color: #666;
         border-top: 1px solid #eee;
     }
+    div[data-testid="stSidebarNav"] { display: none; }
+    section[data-testid="stSidebarHeader"] { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -110,9 +112,19 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Lien discret vers l'interface admin dans la sidebar
+# Navigation personnalisée dans la sidebar
+if st.sidebar.button("🏠 Accueil", key="sidebar_home"):
+    st.session_state.app_mode = None
+    st.rerun()
+if st.sidebar.button("📝 Demande de mission", key="sidebar_demande"):
+    st.session_state.app_mode = "demande"
+    st.rerun()
+if st.sidebar.button("🗺️ Planification", key="sidebar_planif"):
+    st.switch_page("pages/mission.py")
+st.sidebar.markdown("---")
 if st.sidebar.button("⚙️ Admin", key="sidebar_admin"):
     st.switch_page("pages/admin.py")
+
 
 # Si aucun mode n'est sélectionné, afficher les options
 if st.session_state.app_mode is None:
@@ -220,33 +232,27 @@ if st.session_state.app_mode == "demande":
                 from firebase_config import CalendarManager
                 start_dt = datetime.combine(date_debut_check, datetime.min.time())
                 end_dt = datetime.combine(date_fin_check, datetime.max.time())
+                if start_dt > end_dt:
+                    st.warning("⚠️ La date de départ ne peut pas être postérieure à la date de retour")
+                    raise Exception("invalid_period")
                 cal = CalendarManager()
                 availability = cal.check_availability(start_dt, end_dt)
-                if availability.get("available"):
-                    st.success("✅ Des véhicules et chauffeurs sont disponibles pour cette période")
+                veh_count = int(availability.get("vehicles_count", 0) or 0)
+                drv_count = int(availability.get("drivers_count", 0) or 0)
+                if veh_count > 0 and drv_count > 0:
+                    st.success("✅ Des ressources sont disponibles pour cette période — à confirmer par le gestionnaire après soumission")
+                elif veh_count == 0 and drv_count == 0:
+                    st.warning("⚠️ Aucun véhicule ni chauffeur disponibles sur cette période")
                 else:
-                    st.warning("⚠️ Aucun créneau disponible sur cette période")
-                st.markdown("### 🚗 Véhicules disponibles")
-                vehicles = availability.get("vehicles", [])
-                types = {}
-                for v in vehicles:
-                    t = v.get("type", "Indifférent")
-                    types[t] = types.get(t, 0) + 1
-                col_v1, col_v2, col_v3 = st.columns(3)
-                metric_items = list(types.items())
-                m1 = metric_items[0] if len(metric_items) > 0 else ("Berline", 0)
-                m2 = metric_items[1] if len(metric_items) > 1 else ("Station-Wagon", 0)
-                m3 = metric_items[2] if len(metric_items) > 2 else ("4x4", 0)
-                with col_v1:
-                    st.metric(str(m1[0]), f"{m1[1]} disponibles")
-                with col_v2:
-                    st.metric(str(m2[0]), f"{m2[1]} disponibles")
-                with col_v3:
-                    st.metric(str(m3[0]), f"{m3[1]} disponibles")
-                st.markdown("### 👨‍✈️ Chauffeurs disponibles")
-                st.metric("Chauffeurs", availability.get("drivers_count", 0))
+                    st.info("ℹ️ Disponibilité partielle sur cette période — à confirmer par le gestionnaire après soumission")
+                col_av1, col_av2 = st.columns(2)
+                with col_av1:
+                    st.metric("Véhicules disponibles", veh_count)
+                with col_av2:
+                    st.metric("Chauffeurs disponibles", drv_count)
             except Exception as e:
-                st.error(f"❌ Vérification impossible: {e}")
+                if str(e) != "invalid_period":
+                    st.error(f"❌ Vérification impossible: {e}")
     
 # Formulaire de demande amélioré - À remplacer dans app.py (tab_demande)
 
@@ -408,6 +414,14 @@ if st.session_state.app_mode == "demande":
                     value=True,
                     help="Cochez si vous avez besoin d'un chauffeur"
                 )
+            # Champ optionnel: distance estimée
+            distance_km = st.number_input(
+                "Distance estimée (km)",
+                min_value=0.0,
+                value=0.0,
+                step=1.0,
+                help="Optionnel — distance totale prévue de la mission"
+            )
             
             st.divider()
             
@@ -468,6 +482,43 @@ if st.session_state.app_mode == "demande":
             
             st.divider()
             
+            # SECTION 6: Budget
+            st.subheader("💰 Budget")
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+                budget_perdiem_fcfa = st.number_input(
+                    "Per diem (FCFA/jour)",
+                    min_value=0,
+                    value=8000,
+                    step=1000
+                )
+            with col_b2:
+                hotel_driver_fcfa = st.number_input(
+                    "Hôtel chauffeur (FCFA/nuit)",
+                    min_value=0,
+                    value=60000,
+                    step=1000
+                )
+
+            jours_perdiem = (date_retour - date_depart).days + 1 if date_depart and date_retour else 0
+            nuits_chauffeur = max(0, jours_perdiem - 1)
+            total_perdiem_fcfa = int(jours_perdiem * (budget_perdiem_fcfa or 0))
+            total_hotel_fcfa = int(nuits_chauffeur * (hotel_driver_fcfa or 0))
+            budget_total_fcfa = total_perdiem_fcfa + total_hotel_fcfa
+
+            col_aut1, col_aut2 = st.columns([3, 1])
+            with col_aut1:
+                st.markdown(f"**Jours per diem:** {jours_perdiem} • **Nuitées chauffeur:** {nuits_chauffeur}")
+                st.markdown(f"**Total per diem:** {total_perdiem_fcfa:,} FCFA • **Total hôtel:** {total_hotel_fcfa:,} FCFA")
+                st.markdown(f"**Budget estimé:** {budget_total_fcfa:,} FCFA")
+            with col_aut2:
+                auto_budget = st.form_submit_button("✨ Auto‑compléter budget", type="secondary")
+                if auto_budget:
+                    st.session_state['budget_perdiem_total_fcfa'] = total_perdiem_fcfa
+                    st.session_state['hotel_driver_total_fcfa'] = total_hotel_fcfa
+                    st.session_state['budget_estime_fcfa'] = budget_total_fcfa
+                    st.success("Budget complété automatiquement")
+
             # Récapitulatif avant soumission
             with st.expander("📋 Récapitulatif de votre demande", expanded=False):
                 st.markdown(f"""
@@ -482,6 +533,15 @@ if st.session_state.app_mode == "demande":
                 **Avec chauffeur:** {'Oui' if avec_chauffeur else 'Non'}  
                 **Urgence:** {urgence}  
                 **Compte CR:** {compte_cr}
+                
+                **Per diem:** {budget_perdiem_fcfa:,} FCFA/jour  
+                **Hôtel chauffeur:** {hotel_driver_fcfa:,} FCFA/nuit
+                
+                **Jours per diem estimés:** {jours_perdiem}  
+                **Nuitées chauffeur estimées:** {nuits_chauffeur}  
+                **Total per diem:** { (st.session_state.get('budget_perdiem_total_fcfa') or total_perdiem_fcfa):,} FCFA  
+                **Total hôtel:** { (st.session_state.get('hotel_driver_total_fcfa') or total_hotel_fcfa):,} FCFA  
+                **Budget estimé:** { (st.session_state.get('budget_estime_fcfa') or budget_total_fcfa):,} FCFA  
                 """)
             
             # Validation et soumission
@@ -553,6 +613,19 @@ if st.session_state.app_mode == "demande":
                             'type_mission': type_mission,
                             'notes': notes_supplementaires.strip()
                         }
+                        jours_perdiem_submit = (date_retour - date_depart).days + 1 if date_depart and date_retour else 0
+                        nuits_chauffeur_submit = max(0, jours_perdiem_submit - 1)
+                        total_perdiem_submit = int(jours_perdiem_submit * (budget_perdiem_fcfa or 0))
+                        total_hotel_submit = int(nuits_chauffeur_submit * (hotel_driver_fcfa or 0))
+                        budget_total_submit = total_perdiem_submit + total_hotel_submit
+                        request_data.update({
+                            'budget_perdiem_fcfa': int(budget_perdiem_fcfa or 0),
+                            'hotel_driver_fcfa': int(hotel_driver_fcfa or 0),
+                            'budget_perdiem_total_fcfa': int(st.session_state.get('budget_perdiem_total_fcfa', total_perdiem_submit)),
+                            'hotel_driver_total_fcfa': int(st.session_state.get('hotel_driver_total_fcfa', total_hotel_submit)),
+                            'budget_estime_fcfa': int(st.session_state.get('budget_estime_fcfa', budget_total_submit)),
+                            'distance_km': float(distance_km or 0.0)
+                        })
                         
                         # Créer la demande
                         request_id = req_mgr.create_request(request_data)
@@ -658,6 +731,12 @@ if st.session_state.app_mode == "demande":
                         st.write(f"**Destination:** {req.get('destination','')}")
                         st.write(f"**Passagers:** {req.get('nb_passagers',1)}")
                         st.write(f"**Véhicule souhaité:** {req.get('type_vehicule','Indifférent')}")
+                        if req.get('budget_perdiem_fcfa') or req.get('hotel_driver_fcfa'):
+                            st.write("**Budget détaillé:**")
+                            if req.get('budget_perdiem_fcfa'):
+                                st.write(f"• Per diem: {int(req.get('budget_perdiem_fcfa')):,} FCFA/jour")
+                            if req.get('hotel_driver_fcfa'):
+                                st.write(f"• Hôtel chauffeur: {int(req.get('hotel_driver_fcfa')):,} FCFA/nuit")
                         atts = req.get('attachments', []) or []
                         if atts:
                             st.markdown("**Documents:**")
