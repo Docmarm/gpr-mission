@@ -25,6 +25,8 @@ st.set_page_config(
 st.markdown(
     """
 <style>
+div[data-testid="stSidebarNav"] { display: none; }
+section[data-testid="stSidebarHeader"] { display: none; }
 /* Cards KPI modernes avec animations */
 .kpi-card {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -136,10 +138,27 @@ st.markdown(
     border-radius: 8px;
     padding: 12px 16px;
 }
+/* Quick Stats */
+.quick-stats { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 16px; border-radius: 12px; margin: 16px 0; display: flex; justify-content: space-around; color: white; box-shadow: 0 6px 20px rgba(0,0,0,0.15); }
+.quick-stat-item { text-align: center; }
+.quick-stat-value { font-size: 28px; font-weight: 800; display: block; }
+.quick-stat-label { font-size: 11px; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.5px; }
 </style>
 """,
     unsafe_allow_html=True,
 )
+
+# Navigation personnalisée dans la sidebar
+if st.sidebar.button("🏠 Accueil"):
+    st.switch_page("mission_home_page.py")
+if st.sidebar.button("📝 Demande de mission"):
+    st.session_state.app_mode = "demande"
+    st.switch_page("mission_home_page.py")
+if st.sidebar.button("🗺️ Planification"):
+    st.switch_page("pages/mission.py")
+st.sidebar.markdown("---")
+if st.sidebar.button("⚙️ Admin"):
+    st.switch_page("pages/admin.py")
 
 # -------------------------
 # Initialisation Firebase sécurisée
@@ -273,6 +292,28 @@ with st.sidebar:
         <p style='margin: 0; font-size: 12px; opacity: 0.8;'>🔑 {user_info.get('role', 'admin').upper()}</p>
     </div>
     """, unsafe_allow_html=True)
+    # Quick Stats
+    try:
+        from firebase_config import StatisticsManager
+        stats_side = StatisticsManager().get_dashboard_stats()
+    except Exception:
+        stats_side = get_mock_stats()
+    st.markdown(f"""
+    <div class='quick-stats'>
+        <div class='quick-stat-item'>
+            <span class='quick-stat-value'>{stats_side.get('pending_requests', 0)}</span>
+            <span class='quick-stat-label'>En attente</span>
+        </div>
+        <div class='quick-stat-item'>
+            <span class='quick-stat-value'>{stats_side.get('active_missions', 0)}</span>
+            <span class='quick-stat-label'>Actives</span>
+        </div>
+        <div class='quick-stat-item'>
+            <span class='quick-stat-value'>{stats_side.get('missions_this_month', 0)}</span>
+            <span class='quick-stat-label'>Ce mois</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Navigation avec icônes améliorées
     page = st.radio(
@@ -388,6 +429,183 @@ def status_badge_html(status):
     }
     cls, label = cls_map.get(status, ("s-pending", status.capitalize()))
     return f"<span class='status-badge {cls}'>{label}</span>"
+
+def modern_progress(label, value, max_value=100, color="#667eea"):
+    percentage = (value / max_value) * 100 if max_value > 0 else 0
+    st.markdown(f"""
+    <div style='margin: 16px 0;'>
+        <div style='display: flex; justify-content: space-between; margin-bottom: 8px;'>
+            <span style='font-weight: 600; color: #2c3e50;'>{label}</span>
+            <span style='font-weight: 700; color: {color};'>{value}/{max_value}</span>
+        </div>
+        <div style='background: #e0e0e0; height: 12px; border-radius: 10px; overflow: hidden;'>
+            <div style='background: linear-gradient(90deg, {color} 0%, #764ba2 100%); width: {percentage}%; height: 100%; border-radius: 10px; transition: width 0.5s ease;'></div>
+        </div>
+        <div style='text-align: right; font-size: 12px; color: #6c757d; margin-top: 4px;'>
+            {percentage:.1f}%
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def modern_alert(message, alert_type="info", icon=None):
+    cfg = {
+        "info": {"color": "#2196F3", "bg": "#E3F2FD", "icon": "ℹ️"},
+        "success": {"color": "#4caf50", "bg": "#E8F5E9", "icon": "✅"},
+        "warning": {"color": "#ff9800", "bg": "#FFF3E0", "icon": "⚠️"},
+        "error": {"color": "#f44336", "bg": "#FFEBEE", "icon": "❌"},
+    }
+    c = cfg.get(alert_type, cfg["info"]) 
+    ic = icon if icon else c["icon"]
+    st.markdown(f"""
+    <div style='background: {c["bg"]}; border-left: 4px solid {c["color"]}; padding: 16px 20px; border-radius: 12px; margin: 12px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.1);'>
+        <div style='display: flex; align-items: center; gap: 12px;'>
+            <span style='font-size: 24px;'>{ic}</span>
+            <span style='color: #2c3e50; font-weight: 500;'>{message}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+def advanced_pagination(data, items_per_page=10, key="pagination"):
+    total_items = len(data)
+    total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
+    if f"{key}_page" not in st.session_state:
+        st.session_state[f"{key}_page"] = 1
+    current_page = st.session_state[f"{key}_page"]
+    col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+    with col1:
+        if st.button("⏮️ Première", key=f"{key}_first", disabled=(current_page == 1)):
+            st.session_state[f"{key}_page"] = 1
+            st.rerun()
+    with col2:
+        if st.button("◀️ Préc", key=f"{key}_prev", disabled=(current_page == 1)):
+            st.session_state[f"{key}_page"] = max(1, current_page - 1)
+            st.rerun()
+    with col3:
+        st.markdown(f"""
+        <div style='text-align: center; padding: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 8px; font-weight: 700;'>
+            Page {current_page} sur {total_pages} ({total_items} éléments)
+        </div>
+        """, unsafe_allow_html=True)
+    with col4:
+        if st.button("Suiv ▶️", key=f"{key}_next", disabled=(current_page == total_pages)):
+            st.session_state[f"{key}_page"] = min(total_pages, current_page + 1)
+            st.rerun()
+    with col5:
+        if st.button("Dernière ⏭️", key=f"{key}_last", disabled=(current_page == total_pages)):
+            st.session_state[f"{key}_page"] = total_pages
+            st.rerun()
+    with st.expander("🔍 Aller à la page"):
+        jump_page = st.number_input("Numéro de page", min_value=1, max_value=total_pages, value=current_page, key=f"{key}_jump")
+        if st.button("Aller", key=f"{key}_go"):
+            st.session_state[f"{key}_page"] = jump_page
+            st.rerun()
+    start_idx = (current_page - 1) * items_per_page
+    end_idx = min(start_idx + items_per_page, total_items)
+    return data[start_idx:end_idx], current_page, total_pages
+
+def advanced_search_bar(data, columns=None):
+    st.markdown("""
+    <div style='background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); margin-bottom: 24px;'>
+    """, unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([3, 1, 1])
+    with col1:
+        search_query = st.text_input("🔍 Recherche globale", placeholder="Rechercher dans tous les champs...", key="global_search")
+    with col2:
+        search_columns = columns or data.columns.tolist()
+        selected_column = st.selectbox("Colonne", ["Toutes"] + search_columns, key="search_column")
+    with col3:
+        case_sensitive = st.checkbox("Sensible à la casse", value=False)
+    st.markdown("</div>", unsafe_allow_html=True)
+    if search_query:
+        if selected_column == "Toutes":
+            mask = data.astype(str).apply(lambda row: row.str.contains(search_query, case=case_sensitive, na=False).any(), axis=1)
+        else:
+            mask = data[selected_column].astype(str).str.contains(search_query, case=case_sensitive, na=False)
+        return data[mask]
+    return data
+
+def advanced_export_options(data, filename_prefix="export"):
+    with st.expander("📥 Options d'export avancées"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            export_format = st.radio("Choisir le format", ["CSV", "Excel", "JSON"], horizontal=True)
+        with col2:
+            all_columns = data.columns.tolist()
+            selected_columns = st.multiselect("Colonnes à exporter", all_columns, default=all_columns)
+        with col3:
+            include_index = st.checkbox("Inclure l'index", value=False)
+            include_timestamp = st.checkbox("Horodatage dans le nom", value=True)
+        if st.button("📥 Générer l'export", type="primary", use_container_width=True):
+            export_data = data[selected_columns] if selected_columns else data
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S") if include_timestamp else ""
+            filename = f"{filename_prefix}_{timestamp}" if timestamp else filename_prefix
+            if export_format == "CSV":
+                csv = export_data.to_csv(index=include_index).encode('utf-8')
+                st.download_button("💾 Télécharger CSV", data=csv, file_name=f"{filename}.csv", mime="text/csv", use_container_width=True)
+            elif export_format == "Excel":
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    export_data.to_excel(writer, index=include_index, sheet_name='Data')
+                st.download_button("💾 Télécharger Excel", data=buffer.getvalue(), file_name=f"{filename}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+            elif export_format == "JSON":
+                json_data = export_data.to_json(orient='records', indent=2)
+                st.download_button("💾 Télécharger JSON", data=json_data, file_name=f"{filename}.json", mime="application/json", use_container_width=True)
+
+def modern_file_uploader(accept_multiple=True, file_types=None):
+    st.markdown("""
+    <div style='border: 3px dashed #667eea; border-radius: 16px; padding: 40px; text-align: center; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 20%); margin: 20px 0; transition: all 0.3s ease;' onmouseover='this.style.background="linear-gradient(135deg, #667eea 0%, #764ba2 20%)"' onmouseout='this.style.background="linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 20%)"'>
+        <div style='font-size: 64px; margin-bottom: 16px;'>📁</div>
+        <h3 style='color: #2c3e50; margin-bottom: 8px;'>Glissez-déposez vos fichiers ici</h3>
+        <p style='color: #6c757d;'>ou cliquez pour parcourir</p>
+    </div>
+    """, unsafe_allow_html=True)
+    uploaded_files = st.file_uploader("Sélectionner des fichiers", accept_multiple_files=accept_multiple, type=file_types, label_visibility="collapsed")
+    if uploaded_files:
+        files = uploaded_files if accept_multiple else [uploaded_files]
+        st.success(f"✅ {len(files)} fichier(s) téléchargé(s)")
+        for file in files:
+            col1, col2, col3 = st.columns([3, 1, 1])
+            with col1:
+                st.markdown(f"**📄 {file.name}**")
+            with col2:
+                size_mb = file.size / (1024 * 1024)
+                st.caption(f"{size_mb:.2f} MB")
+            with col3:
+                st.caption(file.type)
+        return files if accept_multiple else files[0]
+    return None
+
+def confirm_action(message, button_text="Confirmer", key=None):
+    if f"{key}_confirm_dialog" not in st.session_state:
+        st.session_state[f"{key}_confirm_dialog"] = False
+    if not st.session_state[f"{key}_confirm_dialog"]:
+        if st.button(button_text, key=f"{key}_trigger", type="primary"):
+            st.session_state[f"{key}_confirm_dialog"] = True
+            st.rerun()
+    else:
+        st.warning(f"⚠️ {message}")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Oui, confirmer", key=f"{key}_yes", type="primary", use_container_width=True):
+                st.session_state[f"{key}_confirm_dialog"] = False
+                return True
+        with col2:
+            if st.button("❌ Annuler", key=f"{key}_no", use_container_width=True):
+                st.session_state[f"{key}_confirm_dialog"] = False
+                st.rerun()
+    return False
+
+
+def setup_keyboard_shortcuts():
+    st.markdown("""
+    <script>
+        document.addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.key === 'k') { e.preventDefault(); document.querySelector('input[placeholder*="Recherche"]')?.focus(); }
+            if (e.ctrlKey && e.key === 'n') { e.preventDefault(); }
+            if (e.ctrlKey && e.key === 's') { e.preventDefault(); document.querySelector('button[kind="primary"]')?.click(); }
+        });
+    </script>
+    """, unsafe_allow_html=True)
 
 def to_excel_bytes(df: pd.DataFrame, sheet_name="export"):
     """Convertit un DataFrame en bytes Excel"""
@@ -523,6 +741,9 @@ if page == "📊 Tableau de bord":
             </div>""", 
             unsafe_allow_html=True
         )
+    st.markdown("<br>", unsafe_allow_html=True)
+    used_veh = max(0, total_veh - veh_available)
+    modern_progress("Utilisation véhicules", used_veh, total_veh, "#4caf50")
 
     # KPIs supplémentaires en mode Complet
     if view_mode == "Complet":
@@ -830,21 +1051,14 @@ if page == "📊 Tableau de bord":
         except Exception as e:
             show_toast(f"Erreur montants: {e}", "error")
     
-    # Tips et aide
-    with st.expander("💡 Astuces d'utilisation"):
-        st.markdown("""
-        - 🔎 **Recherche rapide** : Utilisez la barre de recherche pour filtrer instantanément
-        - 📊 **Période personnalisée** : Ajustez la période d'analyse selon vos besoins
-        - 🔄 **Actualisation** : Activez le mode auto-refresh pour des données en temps réel
-        - 📥 **Export** : Téléchargez les rapports en CSV ou Excel
-        - 📱 **Responsive** : L'interface s'adapte à tous les écrans
-        """)
+    # (Section astuces supprimée)
 
 # -------------------------
 # PAGE: Demandes (suite dans le prochain message...)
 # -------------------------
 elif page == "📝 Demandes":
     st.markdown("<h1 style='color: #2c3e50;'>📝 Gestion des demandes de mission</h1>", unsafe_allow_html=True)
+    setup_keyboard_shortcuts()
     
     if db is None:
         st.warning("⚠️ Firebase non disponible. Mode lecture simulée activé.")
@@ -906,12 +1120,7 @@ elif page == "📝 Demandes":
             if status_filter != "all":
                 df_all = df_all[df_all['status'] == status_filter]
             
-            if q:
-                mask = df_all.astype(str).apply(
-                    lambda row: row.str.contains(q, case=False).any(),
-                    axis=1
-                )
-                df_all = df_all[mask]
+            df_all = advanced_search_bar(df_all)
         
         drivers_map = {}
         vehicles_map = {}
@@ -1008,30 +1217,14 @@ elif page == "📝 Demandes":
                         pass
         
         st.markdown("---")
+        advanced_export_options(df_all, filename_prefix="demandes_export")
+        with st.expander("📎 Ajouter des pièces jointes (local)"):
+            modern_file_uploader(accept_multiple=True, file_types=["pdf","jpg","jpeg","png"]) 
         
         # Pagination et affichage
         if not df_all.empty:
-            # Tri
             df_all = df_all.sort_values('created_at', ascending=False)
-            
-            # Pagination
-            page_size = 10
-            total = len(df_all)
-            pages = max(1, (total + page_size - 1) // page_size)
-            
-            col_p1, col_p2, col_p3 = st.columns([1, 2, 1])
-            with col_p2:
-                current_page = st.number_input(
-                    f"Page (Total: {total} demandes)",
-                    min_value=1,
-                    max_value=pages,
-                    value=1,
-                    step=1
-                )
-            
-            start = (current_page - 1) * page_size
-            end = start + page_size
-            subset = df_all.iloc[start:end].to_dict(orient='records')
+            subset, current_page, total_pages = advanced_pagination(df_all.to_dict(orient='records'), items_per_page=10, key="req_pag")
             
             # Affichage des demandes
             for idx, r in enumerate(subset, 1):
@@ -1208,7 +1401,7 @@ elif page == "📝 Demandes":
                                     show_toast(f"Erreur: {e}", "error")
                         
                         with col_a3:
-                            if st.button("❌ Rejeter", key=f"reject_{r.get('id')}", use_container_width=True):
+                            if confirm_action("Confirmer le rejet de cette demande ?", button_text="❌ Rejeter", key=f"reject_{r.get('id')}"):
                                 try:
                                     if db is not None:
                                         from firebase_config import MissionRequestManager
