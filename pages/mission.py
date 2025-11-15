@@ -34,6 +34,9 @@ st.markdown("""
     }
     .main-header h1 { font-size: 2.2rem; margin-bottom: 0.4rem; font-weight: bold; }
     .main-header p { font-size: 1rem; opacity: 0.9; }
+    div[data-testid="stSidebarNav"] { display: none; }
+    section[data-testid="stSidebarHeader"] { display: none; }
+    .stSidebar { padding-top: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -46,6 +49,18 @@ st.markdown("""
 
 if st.button("⬅️ Retour à l'accueil"):
     st.switch_page("mission_home_page.py")
+
+# Navigation personnalisée dans la sidebar
+if st.sidebar.button("🏠 Accueil"):
+    st.switch_page("mission_home_page.py")
+if st.sidebar.button("📝 Demande de mission"):
+    st.session_state.app_mode = "demande"
+    st.switch_page("mission_home_page.py")
+if st.sidebar.button("🗺️ Planification"):
+    pass
+st.sidebar.markdown("---")
+if st.sidebar.button("⚙️ Admin"):
+    st.switch_page("pages/admin.py")
 
 # Import des modules pour l'export PDF et Word
 PDF_AVAILABLE = False
@@ -92,6 +107,20 @@ from streamlit_folium import st_folium
 # INITIALISATION DES VARIABLES DE SESSION
 # --------------------------
 
+def setup_keyboard_shortcuts():
+    st.markdown(
+        "<script>document.addEventListener('keydown', function(e) {if (e.ctrlKey && e.key === 'k') { e.preventDefault(); const inputs = Array.from(document.querySelectorAll('input')); const s = inputs.find(i => i.placeholder && i.placeholder.toLowerCase().includes('recherche')); if (s) s.focus(); } if (e.ctrlKey && e.key === 's') { e.preventDefault(); const btn = document.querySelector('button[kind=\"primary\"]'); if (btn) btn.click(); }});</script>",
+        unsafe_allow_html=True
+    )
+def modern_alert(message, alert_type="info", icon=None):
+    cfg = {"info": {"color":"#2196F3","bg":"#E3F2FD","icon":"ℹ️"},"success":{"color":"#4caf50","bg":"#E8F5E9","icon":"✅"},"warning":{"color":"#ff9800","bg":"#FFF3E0","icon":"⚠️"},"error":{"color":"#f44336","bg":"#FFEBEE","icon":"❌"}}
+    c = cfg.get(alert_type, cfg["info"])
+    ic = icon if icon else c["icon"]
+    st.markdown(f"<div style='background:{c['bg']};border-left:4px solid {c['color']};padding:16px 20px;border-radius:12px;margin:12px 0;box-shadow:0 4px 12px rgba(0,0,0,0.1);'><div style='display:flex;align-items:center;gap:12px;'><span style='font-size:24px;'>{ic}</span><span style='color:#2c3e50;font-weight:500;'>{message}</span></div></div>", unsafe_allow_html=True)
+def modern_progress(label, value, max_value=100, color="#667eea"):
+    pct = (value / max_value) * 100 if max_value > 0 else 0
+    st.markdown(f"<div style='margin:16px 0;'><div style='display:flex;justify-content:space-between;margin-bottom:8px;'><span style='font-weight:600;color:#2c3e50;'>{label}</span><span style='font-weight:700;color:{color};'>{value}/{max_value}</span></div><div style='background:#e0e0e0;height:12px;border-radius:10px;overflow:hidden;'><div style='background:linear-gradient(90deg,{color} 0%, #764ba2 100%);width:{pct}%;height:100%;border-radius:10px;transition:width 0.5s ease;'></div></div><div style='text-align:right;font-size:12px;color:#6c757d;margin-top:4px;'>{pct:.1f}%</div></div>", unsafe_allow_html=True)
+setup_keyboard_shortcuts()
 st.title("🗺️ Planificateur de mission (Moctar)")
 st.caption("Optimisation d'itinéraire + planning journalier + carte interactive + édition de rapport")
 
@@ -1109,12 +1138,9 @@ IMPORTANT:
 
 def build_report_prompt(mission_data, report_type, tone, include_recommendations,
                        include_risks, include_costs, include_timeline, custom_context):
-    """Construit le prompt optimisé pour la génération de rapport"""
-    
     stats = mission_data['stats']
     sites = mission_data['sites']
     activities = mission_data['activities_breakdown']
-    
     prompt = f"""Tu es un expert en rédaction de rapports de mission professionnels. 
 
 DONNÉES DE LA MISSION:
@@ -1152,8 +1178,73 @@ Génère un rapport complet et structuré en français, avec:
 10. Conclusion
 
 Utilise un style {tone.lower()} et structure le rapport avec des titres clairs et des sections bien organisées."""
-
     return prompt
+
+def build_mission_request_prompt(mission_data):
+    stats = mission_data['stats']
+    sites = mission_data['sites']
+    start_date = st.session_state.planning_results.get('start_date') if hasattr(st.session_state,'planning_results') else datetime.now().date()
+    end_date = start_date + timedelta(days=stats.get('total_days',1)-1)
+    cities = [s.get('Ville') for s in sites if s.get('Type')!='Base']
+    prompt = f"""Tu es un assistant administratif. Génère une proposition de demande de mission basée sur ces données:
+- Durée: {stats['total_days']} jour(s)
+- Distance: {stats['total_km']:.1f} km
+- Sites: {', '.join(cities)}
+- Période: {start_date} → {end_date}
+
+Réponds uniquement en JSON avec les clés:
+objet, justification, participants, taches, budget_estime_fcfa, risques, approbateurs, carburant_litres, vehicule, lieu, date_depart, date_retour.
+
+Utilise des valeurs réalistes et concises. Dates au format YYYY-MM-DD."""
+    return prompt
+
+def generate_mission_request_ai_prefill(mission_data, api_key):
+    if not api_key or not mission_data:
+        return None
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    data = {"model": "deepseek-chat", "messages": [{"role": "user", "content": build_mission_request_prompt(mission_data)}], "temperature": 0.2, "max_tokens": 1200}
+    try:
+        r = requests.post("https://api.deepseek.com/chat/completions", headers=headers, json=data, timeout=30)
+        if r.status_code != 200:
+            return None
+        text = r.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        s = text.find("{"); e = text.rfind("}") + 1
+        if s >= 0 and e > s:
+            return json.loads(text[s:e])
+        return None
+    except Exception:
+        return None
+
+def build_mission_request_text(fields):
+    def fmt_date(d):
+        try:
+            return d.strftime("%d/%m/%Y")
+        except Exception:
+            return str(d)
+    lines = []
+    lines.append(f"Objet: {fields.get('objet','')}")
+    lines.append(f"Lieu: {fields.get('lieu','')}")
+    lines.append(f"Période: {fmt_date(fields.get('date_depart'))} → {fmt_date(fields.get('date_retour'))}")
+    lines.append(f"Participants: {fields.get('participants','')}")
+    lines.append(f"Véhicule: {fields.get('vehicule','')} • Carburant: {fields.get('carburant_litres',0)} L")
+    lines.append(f"Budget estimé: {int(fields.get('budget_estime_fcfa',0)):,} FCFA")
+    lines.append("")
+    lines.append("Justification:")
+    lines.append(fields.get('justification',''))
+    lines.append("")
+    lines.append("Tâches principales:")
+    for t in str(fields.get('taches','')).split("\n"):
+        t=t.strip()
+        if t:
+            lines.append(f"- {t}")
+    lines.append("")
+    if int(fields.get('budget_perdiem_fcfa',0)) or int(fields.get('hotel_driver_fcfa',0)):
+        lines.append("Budget détaillé:")
+        if int(fields.get('budget_perdiem_fcfa',0)):
+            lines.append(f"- Per diem: {int(fields.get('budget_perdiem_fcfa',0)):,} FCFA/jour")
+        if int(fields.get('hotel_driver_fcfa',0)):
+            lines.append(f"- Hôtel chauffeur: {int(fields.get('hotel_driver_fcfa',0)):,} FCFA/nuit")
+    return "\n".join(lines)
 
 def generate_pv_report(mission_data, questions_data, deepseek_api_key):
     """Génère un rapport au format procès-verbal professionnel avec l'IA Adja DeepSeek"""
@@ -4294,7 +4385,7 @@ if st.session_state.planning_results:
     with col4:
         st.metric("Temps de visite", f"{stats['total_visit_hours']:.1f} h")
     
-    tab_planning, tab_map, tab_fuel, tab_edit, tab_manual, tab_report, tab_export = st.tabs(["📅 Planning", "🗺️ Carte", "⛽ Carburant", "✏️ Éditer", "🔄 Modifier ordre", "📋 Rapport", "💾 Export"])
+    tab_planning, tab_map, tab_fuel, tab_edit, tab_manual, tab_request, tab_report, tab_export = st.tabs(["📅 Planning", "🗺️ Carte", "⛽ Carburant", "✏️ Éditer", "🔄 Modifier ordre", "📑 Demande de mission", "📋 Rapport", "💾 Export"])
     
     with tab_planning:
         st.subheader("Planning détaillé")
@@ -5708,6 +5799,109 @@ if st.session_state.planning_results:
                 use_container_width=True
             )
 
+    with tab_request:
+        st.subheader("📑 Demande de mission")
+        cols = st.columns(2)
+        with cols[0]:
+            objet = st.text_input("Objet", value=st.session_state.get("req_objet",""))
+            justification = st.text_area("Justification", value=st.session_state.get("req_justification",""), height=100)
+            demandeur = st.text_input("Demandeur", value=st.session_state.get("req_demandeur",""))
+            email_demandeur = st.text_input("Email du demandeur", value=st.session_state.get("req_email_demandeur",""))
+            telephone_demandeur = st.text_input("Téléphone du demandeur", value=st.session_state.get("req_telephone_demandeur",""))
+            lieu_default = ', '.join([s['Ville'] for s in sites_ordered if s.get('Type')!='Base'])
+            lieu = st.text_input("Lieu", value=st.session_state.get("req_lieu", lieu_default))
+            date_depart = st.date_input("Date de départ", value=st.session_state.get("req_date_depart", start_date))
+            date_retour = st.date_input("Date de retour", value=st.session_state.get("req_date_retour", start_date + timedelta(days=stats['total_days']-1)))
+        with cols[1]:
+            taches = st.text_area("Tâches principales", value=st.session_state.get("req_taches",""), height=100)
+            perdiem_fcfa = st.number_input("Per diem (FCFA/jour)", min_value=0, value=int(st.session_state.get("req_perdiem_fcfa",8000)), step=1000)
+            hotel_driver_fcfa = st.number_input("Hôtel chauffeur (FCFA/nuit)", min_value=0, value=int(st.session_state.get("req_hotel_driver_fcfa",60000)), step=1000)
+            vehicule = st.selectbox("Véhicule", options=list(get_vehicle_types().keys()), index=0)
+            fuel_data_req = calculate_fuel_consumption(stats.get('total_km',0), vehicule)
+            carburant_l = st.number_input("Carburant (L)", min_value=0, value=int(fuel_data_req['fuel_needed_liters']) if fuel_data_req else 0)
+            budget = st.number_input("Budget estimé (FCFA)", min_value=0, value=st.session_state.get("req_budget",0), step=10000)
+        colA, colB, colC = st.columns(3)
+        with colA:
+            if st.button("✨ Compléter automatiquement (IA Adja)", use_container_width=True):
+                md = collect_mission_data_for_ai()
+                ai = generate_mission_request_ai_prefill(md, deepseek_api_key)
+                if ai:
+                    st.session_state.req_objet = ai.get("objet","")
+                    st.session_state.req_justification = ai.get("justification","")
+                    st.session_state.req_taches = "\n".join(ai.get("taches", []))
+                    st.session_state.req_lieu = ai.get("lieu", st.session_state.get("req_lieu",""))
+                    if ai.get("budget_perdiem_fcfa") is not None:
+                        try:
+                            st.session_state.req_perdiem_fcfa = int(ai.get("budget_perdiem_fcfa", 0))
+                        except Exception:
+                            pass
+                    if ai.get("hotel_driver_fcfa") is not None:
+                        try:
+                            st.session_state.req_hotel_driver_fcfa = int(ai.get("hotel_driver_fcfa", 0))
+                        except Exception:
+                            pass
+                    st.session_state.req_budget = int(ai.get("budget_estime_fcfa", budget or 0))
+                    if ai.get("carburant_litres"):
+                        st.session_state.req_carburant = int(ai["carburant_litres"])
+                    try:
+                        jours = (date_retour - date_depart).days + 1
+                        nuits = max(0, jours - 1)
+                        total_perdiem = int(jours * (st.session_state.get("req_perdiem_fcfa", perdiem_fcfa) or 0))
+                        total_hotel = int(nuits * (st.session_state.get("req_hotel_driver_fcfa", hotel_driver_fcfa) or 0))
+                        st.session_state.req_budget = total_perdiem + total_hotel
+                        modern_alert(f"Budget estimé mis à jour: {st.session_state.req_budget:,} FCFA (per diem {jours}j, hôtel {nuits}n)", "info")
+                    except Exception:
+                        pass
+                    st.success("Champs complétés")
+                    st.rerun()
+        with colB:
+            if st.button("✉️ Générer email de demande", use_container_width=True):
+                email_text = f"Objet: {objet}\n\nBonjour,\n\nMerci de valider la mission {mission_title} du {date_depart.strftime('%d/%m/%Y')} au {date_retour.strftime('%d/%m/%Y')} à {lieu}.\nDemandeur: {demandeur}.\nVéhicule: {vehicule}, carburant: {carburant_l} L.\nBudget estimé: {budget:,} FCFA.\nPer diem: {int(perdiem_fcfa):,} FCFA/jour • Hôtel chauffeur: {int(hotel_driver_fcfa):,} FCFA/nuit\n\nJustification:\n{justification}\n\nTâches:\n{taches}\n\nCordialement."
+                st.code(email_text)
+
+        with colC:
+            if st.button("📤 Soumettre la demande", type="primary", use_container_width=True):
+                required_fields = {
+                    "Objet": objet,
+                    "Justification": justification,
+                    "Demandeur": demandeur,
+                    "Email": email_demandeur,
+                    "Téléphone": telephone_demandeur,
+                    "Lieu": lieu,
+                }
+                missing = [k for k, v in required_fields.items() if not str(v).strip()]
+                if missing:
+                    modern_alert(f"Champs obligatoires manquants: {', '.join(missing)}", "error")
+                else:
+                    try:
+                        from firebase_config import MissionRequestManager
+                        mgr = MissionRequestManager()
+                        dt_depart = datetime.combine(date_depart, time(8, 0)) if isinstance(date_depart, datetime) == False else date_depart
+                        dt_retour = datetime.combine(date_retour, time(23, 59)) if isinstance(date_retour, datetime) == False else date_retour
+                        req = {
+                            "motif_mission": objet.strip(),
+                            "destination": lieu.strip(),
+                            "date_depart": dt_depart,
+                            "date_retour": dt_retour,
+                            "nb_passagers": 1,
+                            "type_vehicule": vehicule,
+                            "avec_chauffeur": True,
+                            "notes": justification.strip(),
+                            "budget_estime_fcfa": int(budget or 0),
+                            "budget_perdiem_fcfa": int(perdiem_fcfa or 0),
+                            "hotel_driver_fcfa": int(hotel_driver_fcfa or 0),
+                            "carburant_litres": int(carburant_l or 0),
+                            "participants": demandeur,
+                            "service_demandeur": st.session_state.get("service_demandeur",""),
+                            "nom_demandeur": demandeur.strip(),
+                            "email_demandeur": email_demandeur.strip().lower(),
+                            "telephone_demandeur": telephone_demandeur.strip(),
+                        }
+                        rid = mgr.create_request(req)
+                        modern_alert(f"Demande soumise avec succès • Numéro: {rid}", "success")
+                    except Exception as e:
+                        modern_alert(f"Erreur lors de la soumission: {e}", "error")
+
     with tab_report:
         st.subheader("📋 Génération de rapport de mission")
         
@@ -5727,18 +5921,18 @@ if st.session_state.planning_results:
                 
                 with col1:
                     report_type = st.selectbox(
-                        "Type de rapport",
-                        ["Rapport complet", "Résumé exécutif", "Rapport technique", "Rapport financier", "Procès-verbal professionnel"],
-                        help="Choisissez le type de rapport à générer"
-                    )
-                
+                    "Type de rapport",
+                    ["Rapport complet", "Résumé exécutif", "Rapport technique", "Rapport financier", "Procès-verbal professionnel"],
+                    help="Choisissez le type de rapport à générer"
+                )
+            
                 with col2:
                     report_tone = st.selectbox(
-                        "Ton du rapport",
-                        ["Professionnel", "Formel", "Décontracté", "Technique"],
-                        help="Définissez le ton du rapport"
-                    )
-                
+                    "Ton du rapport",
+                    ["Professionnel", "Formel", "Décontracté", "Technique"],
+                    help="Définissez le ton du rapport"
+                )
+            
                 # Options avancées (sans expander imbriqué)
                 st.markdown("**Options avancées**")
                 
@@ -5747,17 +5941,17 @@ if st.session_state.planning_results:
                 with col_opt1:
                     include_recommendations = st.checkbox("Inclure des recommandations", value=True)
                     include_risks = st.checkbox("Analyser les risques", value=False)
-                
+            
                 with col_opt2:
                     include_costs = st.checkbox("Estimation des coûts", value=False)
                     include_timeline = st.checkbox("Planning détaillé", value=True)
-                
+            
                 custom_context = st.text_area(
-                    "Contexte supplémentaire (optionnel)",
-                    placeholder="Ajoutez des informations spécifiques à votre mission...",
-                    height=100
+                "Contexte supplémentaire (optionnel)",
+                placeholder="Ajoutez des informations spécifiques à votre mission...",
+                height=100
                 )
-                
+            
                 if st.button("🚀 Générer rapport basique", type="primary", use_container_width=True):
                     if st.session_state.planning_results:
                         # Animation d'attente améliorée avec barre de progression
@@ -5768,7 +5962,6 @@ if st.session_state.planning_results:
                             status_text.text("🔄 Collecte des données de mission...")
                             progress_bar.progress(20)
                             mission_data = collect_mission_data_for_ai()
-                                
                             status_text.text("📝 Construction du prompt...")
                             progress_bar.progress(40)
                             prompt = build_report_prompt(
@@ -5776,7 +5969,6 @@ if st.session_state.planning_results:
                                 include_recommendations, include_risks, 
                                 include_costs, include_timeline, custom_context
                             )
-                            
                             status_text.text("🤖 Génération du rapport par l'IA Adja...")
                             progress_bar.progress(60)
                             response = requests.post(
@@ -5792,89 +5984,85 @@ if st.session_state.planning_results:
                                     "max_tokens": 4000
                                 }
                             )
-                            
                             status_text.text("✅ Finalisation du rapport...")
                             progress_bar.progress(100)
-                            
                             if response.status_code == 200:
                                 report_content = response.json()["choices"][0]["message"]["content"]
                                 
-                                # Nettoyer les éléments d'animation
-                                progress_bar.empty()
-                                status_text.empty()
-                                
-                                st.success("✅ Rapport généré avec succès!")
-                                
-                                # Affichage du rapport
-                                st.markdown("### 📄 Votre rapport")
-                                st.markdown(report_content)
-                                
-                                # Boutons de téléchargement
-                                col_txt, col_md, col_html = st.columns(3)
-                                
-                                with col_txt:
-                                    st.download_button(
-                                        label="📄 TXT",
-                                        data=report_content,
-                                        file_name=f"rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-                                        mime="text/plain",
-                                        use_container_width=True
-                                    )
-                                
-                                with col_md:
-                                    st.download_button(
-                                        label="📝 MD",
-                                        data=report_content,
-                                        file_name=f"rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
-                                        mime="text/markdown",
-                                        use_container_width=True
-                                    )
-                                
-                                with col_html:
-                                    html_content = f"""
-                                    <!DOCTYPE html>
-                                    <html>
-                                    <head>
-                                        <meta charset="UTF-8">
-                                        <title>Rapport de Mission</title>
-                                        <style>
-                                            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 40px; line-height: 1.6; color: #333; }}
-                                            h1, h2, h3 {{ color: #2c3e50; }}
-                                            h1 {{ border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
-                                            h2 {{ border-left: 4px solid #3498db; padding-left: 15px; }}
-                                            .header {{ text-align: center; margin-bottom: 30px; background: #f8f9fa; padding: 20px; border-radius: 10px; }}
-                                            .footer {{ margin-top: 30px; text-align: center; font-size: 0.9em; color: #666; }}
-                                            ul, ol {{ margin-left: 20px; }}
-                                            strong {{ color: #2c3e50; }}
-                                        </style>
-                                    </head>
-                                    <body>
-                                        <div class="header">
-                                            <h1>Rapport de Mission</h1>
-                                            <p><strong>Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}</strong></p>
-                                            <p>Type: {report_type} | Ton: {report_tone}</p>
-                                        </div>
-                                    {report_content.replace(chr(10), '<br>')}
-                                        <div class="footer">
-                                            <p>Rapport généré automatiquement par l'IA Adja DeepSeek</p>
-                                        </div>
-                                    </body>
-                                    </html>
-                                    """
-                                    st.download_button(
-                                        label="🌐 HTML",
-                                        data=html_content,
-                                        file_name=f"rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
-                                        mime="text/html",
-                                        use_container_width=True
-                                    )
+                            progress_bar.empty()
+                            status_text.empty()
+                             
+                            modern_alert("Rapport généré avec succès!", "success")
+                             
+                            # Affichage du rapport
+                            st.markdown("### 📄 Votre rapport")
+                            st.markdown(report_content)
                             
-                            else:
+                            # Boutons de téléchargement
+                            col_txt, col_md, col_html = st.columns(3)
+                            
+                            with col_txt:
+                                st.download_button(
+                                    label="📄 TXT",
+                                    data=report_content,
+                                    file_name=f"rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                                    mime="text/plain",
+                                    use_container_width=True
+                                )
+                            
+                            with col_md:
+                                st.download_button(
+                                    label="📝 MD",
+                                    data=report_content,
+                                    file_name=f"rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.md",
+                                    mime="text/markdown",
+                                    use_container_width=True
+                                )
+                            
+                            with col_html:
+                                html_content = f"""
+                                <!DOCTYPE html>
+                                <html>
+                                <head>
+                                    <meta charset="UTF-8">
+                                    <title>Rapport de Mission</title>
+                                    <style>
+                                        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 40px; line-height: 1.6; color: #333; }}
+                                        h1, h2, h3 {{ color: #2c3e50; }}
+                                        h1 {{ border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
+                                        h2 {{ border-left: 4px solid #3498db; padding-left: 15px; }}
+                                        .header {{ text-align: center; margin-bottom: 30px; background: #f8f9fa; padding: 20px; border-radius: 10px; }}
+                                        .footer {{ margin-top: 30px; text-align: center; font-size: 0.9em; color: #666; }}
+                                        ul, ol {{ margin-left: 20px; }}
+                                        strong {{ color: #2c3e50; }}
+                                    </style>
+                                </head>
+                                <body>
+                                    <div class="header">
+                                        <h1>Rapport de Mission</h1>
+                                        <p><strong>Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}</strong></p>
+                                        <p>Type: {report_type} | Ton: {report_tone}</p>
+                                    </div>
+                                {report_content.replace(chr(10), '<br>')}
+                                    <div class="footer">
+                                        <p>Rapport généré automatiquement par l'IA Adja DeepSeek</p>
+                                    </div>
+                                </body>
+                                </html>
+                                """
+                                st.download_button(
+                                    label="🌐 HTML",
+                                    data=html_content,
+                                    file_name=f"rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
+                                    mime="text/html",
+                                    use_container_width=True
+                                )
+                            if response.status_code != 200:
                                 st.error(f"❌ Erreur API: {response.status_code}")
                                 st.error(response.text)
-                        
                         except Exception as e:
-                            st.error(f"❌ Erreur lors de la génération: {str(e)}")
+                            status_text.error(f"Une erreur est survenue lors de la génération du rapport : {e}")
+                            progress_bar.empty()
                 else:
                     st.warning("⚠️ Aucun planning disponible. Veuillez d'abord optimiser votre itinéraire.")
             
@@ -7088,7 +7276,7 @@ Fonction: {pv_fonction}
                     status_text.empty()
                         
                     if report_content:
-                            st.success("✅ Rapport amélioré généré avec succès!")
+                            modern_alert("Rapport amélioré généré avec succès!", "success")
                             
                             # Affichage du rapport
                             st.markdown("### 📄 Rapport généré")
