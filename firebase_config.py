@@ -211,7 +211,9 @@ class MissionRequestManager:
             'start_date': req.get('date_depart') if req else datetime.now(),
             'end_date': req.get('date_retour') if req else datetime.now(),
             'driver_id': driver_id,
-            'vehicle_id': vehicle_id
+            'vehicle_id': vehicle_id,
+            'budget_perdiem_fcfa': req.get('budget_perdiem_fcfa') if req else None,
+            'hotel_driver_fcfa': req.get('hotel_driver_fcfa') if req else None
         })
 
 # ==========================================
@@ -427,6 +429,8 @@ class CalendarManager:
         
         available_vehicles = vehicle_mgr.get_available_vehicles(start_date, end_date)
         available_drivers = driver_mgr.get_available_drivers(start_date, end_date)
+        # Ne considérer que les missions actives dans les calculs internes
+        # (les méthodes get_available_* s'appuient déjà sur active_missions)
         
         return {
             'available': len(available_vehicles) > 0 and len(available_drivers) > 0,
@@ -566,7 +570,6 @@ class StatisticsManager:
         }
     
     def get_monthly_report(self, year: int, month: int) -> Dict:
-        """Génère un rapport mensuel basé sur 'start_date'"""
         start_date = datetime(year, month, 1)
         if month == 12:
             end_date = datetime(year + 1, 1, 1)
@@ -580,19 +583,41 @@ class StatisticsManager:
         ).stream())
         missions_data = [m.to_dict() for m in missions]
         
-        # Statistiques
         total_missions = len(missions_data)
         total_km = sum(m.get('distance_km', 0) for m in missions_data)
         
-        # Par chauffeur
+        perdiem_per_day_default = 8000
+        hotel_fee_per_night_default = 60000
         driver_stats = {}
         for mission in missions_data:
             driver_id = mission.get('driver_id')
-            if driver_id:
-                if driver_id not in driver_stats:
-                    driver_stats[driver_id] = {'missions': 0, 'km': 0}
-                driver_stats[driver_id]['missions'] += 1
-                driver_stats[driver_id]['km'] += mission.get('distance_km', 0)
+            if not driver_id:
+                continue
+            start = mission.get('start_date')
+            end = mission.get('end_date')
+            days = 0
+            try:
+                if start and end:
+                    days = (end - start).days + 1
+            except Exception:
+                try:
+                    start_dt = datetime.fromisoformat(str(start)) if start else None
+                    end_dt = datetime.fromisoformat(str(end)) if end else None
+                    if start_dt and end_dt:
+                        days = (end_dt - start_dt).days + 1
+                except Exception:
+                    days = 0
+            nights = max(0, days - 1)
+            perdiem_rate = mission.get('budget_perdiem_fcfa') or perdiem_per_day_default
+            hotel_rate = mission.get('hotel_driver_fcfa') or hotel_fee_per_night_default
+            if driver_id not in driver_stats:
+                driver_stats[driver_id] = {'missions': 0, 'km': 0, 'days': 0, 'perdiem_fcfa': 0, 'hotel_fcfa': 0, 'total_fcfa': 0}
+            driver_stats[driver_id]['missions'] += 1
+            driver_stats[driver_id]['km'] += mission.get('distance_km', 0)
+            driver_stats[driver_id]['days'] += max(0, days)
+            driver_stats[driver_id]['perdiem_fcfa'] += int(perdiem_rate) * max(0, days)
+            driver_stats[driver_id]['hotel_fcfa'] += int(hotel_rate) * nights
+            driver_stats[driver_id]['total_fcfa'] = driver_stats[driver_id]['perdiem_fcfa'] + driver_stats[driver_id]['hotel_fcfa']
         
         return {
             'period': f"{month}/{year}",
